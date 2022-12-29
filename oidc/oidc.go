@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -48,12 +49,11 @@ var issuerURLKey contextKey
 // This method sets the same context key used by the golang.org/x/oauth2 package,
 // so the returned context works for that package too.
 //
-//    myClient := &http.Client{}
-//    ctx := oidc.ClientContext(parentContext, myClient)
+//	myClient := &http.Client{}
+//	ctx := oidc.ClientContext(parentContext, myClient)
 //
-//    // This will use the custom client
-//    provider, err := oidc.NewProvider(ctx, "https://accounts.example.com")
-//
+//	// This will use the custom client
+//	provider, err := oidc.NewProvider(ctx, "https://accounts.example.com")
 func ClientContext(ctx context.Context, client *http.Client) context.Context {
 	return context.WithValue(ctx, oauth2.HTTPClient, client)
 }
@@ -73,14 +73,14 @@ func cloneContext(ctx context.Context) context.Context {
 // by upstream is mismatched with the discovery URL. This is meant for integration
 // with off-spec providers such as Azure.
 //
-//    discoveryBaseURL := "https://login.microsoftonline.com/organizations/v2.0"
-//    issuerURL := "https://login.microsoftonline.com/my-tenantid/v2.0"
+//	discoveryBaseURL := "https://login.microsoftonline.com/organizations/v2.0"
+//	issuerURL := "https://login.microsoftonline.com/my-tenantid/v2.0"
 //
-//    ctx := oidc.InsecureIssuerURLContext(parentContext, issuerURL)
+//	ctx := oidc.InsecureIssuerURLContext(parentContext, issuerURL)
 //
-//    // Provider will be discovered with the discoveryBaseURL, but use issuerURL
-//    // for future issuer validation.
-//    provider, err := oidc.NewProvider(ctx, discoveryBaseURL)
+//	// Provider will be discovered with the discoveryBaseURL, but use issuerURL
+//	// for future issuer validation.
+//	provider, err := oidc.NewProvider(ctx, discoveryBaseURL)
 //
 // This is insecure because validating the correct issuer is critical for multi-tenant
 // proivders. Any overrides here MUST be carefully reviewed.
@@ -233,14 +233,14 @@ func NewProvider(ctx context.Context, issuer string) (*Provider, error) {
 
 // Claims unmarshals raw fields returned by the server during discovery.
 //
-//    var claims struct {
-//        ScopesSupported []string `json:"scopes_supported"`
-//        ClaimsSupported []string `json:"claims_supported"`
-//    }
+//	var claims struct {
+//	    ScopesSupported []string `json:"scopes_supported"`
+//	    ClaimsSupported []string `json:"claims_supported"`
+//	}
 //
-//    if err := provider.Claims(&claims); err != nil {
-//        // handle unmarshaling error
-//    }
+//	if err := provider.Claims(&claims); err != nil {
+//	    // handle unmarshaling error
+//	}
 //
 // For a list of fields defined by the OpenID Connect spec see:
 // https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata
@@ -284,17 +284,7 @@ func (u *UserInfo) Claims(v interface{}) error {
 	return json.Unmarshal(u.claims, v)
 }
 
-// UserInfo uses the token source to query the provider's user info endpoint.
-func (p *Provider) UserInfo(ctx context.Context, tokenSource oauth2.TokenSource) (*UserInfo, error) {
-	if p.userInfoURL == "" {
-		return nil, errors.New("oidc: user info endpoint is not supported by this provider")
-	}
-
-	req, err := http.NewRequest("GET", p.userInfoURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("oidc: create GET request: %v", err)
-	}
-
+func (p *Provider) userInfoWithRequest(ctx context.Context, tokenSource oauth2.TokenSource, req *http.Request) (*UserInfo, error) {
 	token, err := tokenSource.Token()
 	if err != nil {
 		return nil, fmt.Errorf("oidc: get access token: %v", err)
@@ -335,6 +325,34 @@ func (p *Provider) UserInfo(ctx context.Context, tokenSource oauth2.TokenSource)
 		EmailVerified: bool(userInfo.EmailVerified),
 		claims:        body,
 	}, nil
+}
+
+// UserInfo uses the token source to query the provider's user info endpoint using a GET request.
+func (p *Provider) UserInfo(ctx context.Context, tokenSource oauth2.TokenSource) (*UserInfo, error) {
+	if p.userInfoURL == "" {
+		return nil, errors.New("oidc: user info endpoint is not supported by this provider")
+	}
+
+	req, err := http.NewRequest("GET", p.userInfoURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("oidc: create GET request: %v", err)
+	}
+
+	return p.userInfoWithRequest(ctx, tokenSource, req)
+}
+
+// UserInfoPost uses the token source to query the provider's user info endpoint using a POST request
+func (p *Provider) UserInfoPost(ctx context.Context, tokenSource oauth2.TokenSource, body io.Reader) (*UserInfo, error) {
+	if p.userInfoURL == "" {
+		return nil, errors.New("oidc: user info endpoint is not supported by this provider")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, p.userInfoURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("oidc: create POST request: %v", err)
+	}
+
+	return p.userInfoWithRequest(ctx, tokenSource, req)
 }
 
 // IDToken is an OpenID Connect extension that provides a predictable representation
@@ -391,18 +409,17 @@ type IDToken struct {
 
 // Claims unmarshals the raw JSON payload of the ID Token into a provided struct.
 //
-//		idToken, err := idTokenVerifier.Verify(rawIDToken)
-//		if err != nil {
-//			// handle error
-//		}
-//		var claims struct {
-//			Email         string `json:"email"`
-//			EmailVerified bool   `json:"email_verified"`
-//		}
-//		if err := idToken.Claims(&claims); err != nil {
-//			// handle error
-//		}
-//
+//	idToken, err := idTokenVerifier.Verify(rawIDToken)
+//	if err != nil {
+//		// handle error
+//	}
+//	var claims struct {
+//		Email         string `json:"email"`
+//		EmailVerified bool   `json:"email_verified"`
+//	}
+//	if err := idToken.Claims(&claims); err != nil {
+//		// handle error
+//	}
 func (i *IDToken) Claims(v interface{}) error {
 	if i.claims == nil {
 		return errors.New("oidc: claims not set")

@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -518,4 +519,46 @@ func TestUserInfoEndpoint(t *testing.T) {
 		})
 	}
 
+}
+
+func TestUserInfoPost(t *testing.T) {
+	userInfoJSON := `{
+		"sub": "1234567890",
+		"profile": "Joe Doe",
+		"email": "joe@doe.com",
+		"email_verified": true,
+		"is_admin": true
+	}`
+	server := testServer{
+		contentType: "application/json",
+		userInfo:    userInfoJSON,
+	}
+	wantUserInfo := UserInfo{
+		Subject:       "1234567890",
+		Profile:       "Joe Doe",
+		Email:         "joe@doe.com",
+		EmailVerified: true,
+		claims:        []byte(userInfoJSON),
+	}
+
+	serverURL := server.run(t)
+	ctx := context.Background()
+	provider, err := NewProvider(ctx, serverURL)
+	if err != nil {
+		t.Fatalf("Failed to initialize provider for test %v", err)
+	}
+
+	fakeOauthToken := oauth2.Token{}
+	info, err := provider.UserInfoPost(ctx, oauth2.StaticTokenSource(&fakeOauthToken), bytes.NewBuffer([]byte("foo")))
+	if err != nil {
+		t.Fatalf("failed to get userinfo %v", err)
+	}
+
+	if info.Email != wantUserInfo.Email {
+		t.Errorf("expected UserInfo to be %v , got %v", wantUserInfo, info)
+	}
+
+	if info.EmailVerified != wantUserInfo.EmailVerified {
+		t.Errorf("expected UserInfo.EmailVerified to be %v , got %v", wantUserInfo.EmailVerified, info.EmailVerified)
+	}
 }
