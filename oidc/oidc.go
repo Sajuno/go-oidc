@@ -348,6 +348,7 @@ func (p *Provider) UserInfoPost(ctx context.Context, tokenSource oauth2.TokenSou
 	}
 
 	req, err := http.NewRequest(http.MethodPost, p.userInfoURL, body)
+	req.Header.Set("Content-Type", "application/json")
 	if err != nil {
 		return nil, fmt.Errorf("oidc: create POST request: %v", err)
 	}
